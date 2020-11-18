@@ -13,12 +13,16 @@ import collections
 import math
 import time
 
+#from tqdm import tqdm
+import tensorflow.contrib.slim as slim
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--input_dir", help="path to folder containing images")
 parser.add_argument("--mode", required=True, choices=["train", "test", "export"])
 parser.add_argument("--output_dir", required=True, help="where to put output files")
 parser.add_argument("--seed", type=int)
 parser.add_argument("--checkpoint", default=None, help="directory with checkpoint to resume training from or use for testing")
+parser.add_argument("--load_step", type=int, default=-1, help="step to resume training from or use for testing")
 
 parser.add_argument("--max_steps", type=int, help="number of training steps (0 to disable)")
 parser.add_argument("--max_epochs", type=int, help="number of training epochs")
@@ -627,7 +631,6 @@ def main():
 
     # inputs and targets are [batch_size, height, width, channels]
     model = create_model(examples.inputs, examples.targets)
-
     # undo colorization splitting on images that we use for display/output
     if a.lab_colorization:
         if a.which_direction == "AtoB":
@@ -705,7 +708,7 @@ def main():
     with tf.name_scope("parameter_count"):
         parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
 
-    saver = tf.train.Saver(max_to_keep=1)
+    saver = tf.train.Saver(max_to_keep=None)
 
     logdir = a.output_dir if (a.trace_freq > 0 or a.summary_freq > 0) else None
     sv = tf.train.Supervisor(logdir=logdir, save_summaries_secs=0, saver=None)
@@ -713,10 +716,13 @@ def main():
         print("parameter_count =", sess.run(parameter_count))
 
         if a.checkpoint is not None:
-            print("loading model from checkpoint")
-            checkpoint = tf.train.latest_checkpoint(a.checkpoint)
+            if a.load_step < 0: checkpoint = tf.train.latest_checkpoint(a.checkpoint)
+            else: checkpoint = os.path.join(a.checkpoint, "model-%d" % a.load_step)
+            print("loading model from %s" % (checkpoint,))
+            #print("loading model from checkpoint")
+            #checkpoint = tf.train.latest_checkpoint(a.checkpoint)
             saver.restore(sess, checkpoint)
-
+        slim.model_analyzer.analyze_vars(tf.trainable_variables(), print_info=True)
         max_steps = 2**32
         if a.max_epochs is not None:
             max_steps = examples.steps_per_epoch * a.max_epochs
@@ -729,10 +735,11 @@ def main():
             start = time.time()
             max_steps = min(examples.steps_per_epoch, max_steps)
             for step in range(max_steps):
+                print("%d/%d" % (step, max_steps))
                 results = sess.run(display_fetches)
                 filesets = save_images(results)
-                for i, f in enumerate(filesets):
-                    print("evaluated image", f["name"])
+                #for i, f in tqdm(enumerate(filesets)):
+                #    print("evaluated image", f["name"])
                 index_path = append_index(filesets)
             print("wrote index at", index_path)
             print("rate", (time.time() - start) / max_steps)
